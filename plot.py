@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import matplotlib
 import matplotlib.pyplot as plt
 from numpy.lib.scimath import sqrt
@@ -5,13 +7,20 @@ plt.switch_backend('agg')
 import numpy as np
 import yaml
 import os
+import sys
 from typing import Callable, Dict, Iterable, Iterator, Optional, Pattern, Tuple, List, TypeVar, Union, Any, Sequence
 from functools import reduce
 from dataclasses import dataclass
 
 # todo: asymptotic line
-# todo: axies text line
-# todo: adjust template
+# todo: axies text line adjust
+# todo: adjust template style
+# todo: support rcParam
+# todo: support image cut
+# todo: support CLI
+# todo: support CLI to yaml convert
+# todo: template output
+# todo: switch backend: agg ps pdf::::  no x11 -> agg + imgcat   x11  -> plt.show + imgcat 
 
 _num = Union[int, float]
 _str_num = Union[_num, str]
@@ -47,6 +56,7 @@ class StringConst():
     linewidth = 'linewidth'
     # variable
     x2y = 'x2y'
+    bias = 'bias'
     
     
 class PlotConfig():
@@ -76,7 +86,13 @@ class PlotConfig():
 class DataFrame():
     def __init__(self, data: Sequence[float]) -> None:
         self.data = np.array(data)
-        
+
+    def __add__(self, bias: Union[float, Sequence[float]]) -> 'DataFrame':
+        if bias:
+            return self.__class__(self.data + bias)
+        else:
+            return self
+
     @staticmethod
     def MAE(one: 'DataFrame', other: 'DataFrame', string: bool=False) -> Union[str, float]:
         err = abs(one.data - other.data)
@@ -226,10 +242,18 @@ class PlotBaseClass():
     def fig_init(self, figsize: Sequence[_num]):
         figsize = figsize if figsize else (6, 4)
         self._fig, self._ax = plt.subplots(nrows=1, ncols=1, figsize=figsize)
+        self._ax_x2y = None
     
     def second_y_axis(self):
-        return self._ax.twinx()
+        if not self._ax_x2y:
+            self._ax_x2y = self._ax.twinx()
+        return self._ax_x2y
     
+    def legend(self):
+        self._ax.legend()
+        if self._ax_x2y:
+            self._ax_x2y.legend()
+
     def eval(self, func: str, arg: List[str], key: List[str], key_expr: List[str], value: List[Any]):
         if len(key) != len(value):
             print('internal error: PlotBaseClass key and value not match')
@@ -318,7 +342,9 @@ class YamlPlot(PlotBaseClass):
         self.file_data: Optional[List[FileData]] = None
         # todo: analyze and plot
         self.analyze_plot()
+        self.legend()
         self.fig_save()
+        # plt.show()
     
     def fig_init(self):
         s = self.s
@@ -377,7 +403,6 @@ class YamlPlot(PlotBaseClass):
         if texts:
             for text in texts:
                 self.task_text_execute(*text)
-        self._ax.legend()
             
     @staticmethod
     def ele(prop: Union[Sequence[_str_num], _str_num], idx: Optional[int]):
@@ -400,6 +425,20 @@ class YamlPlot(PlotBaseClass):
                 self.task_text_execute(text[0], text[1], new_text, style)
             except:
                 self.task_text_execute(text[0], text[1], new_text)
+
+    def y_bias_process(self, task: Dict[str, Any], y_idx: Union[int, List[int]]) -> Optional[List[Any]]:
+        bias = task.get(self.s.bias, None)
+        if bias:
+            return bias[1]
+            # if type(y_idx) is list:
+            #     return [ bias[1][i] for i in range(len(y_idx)) ]
+            # else:
+            #     return bias[1]
+        else:
+            if type(y_idx) is list:
+                return [ None for _ in range(len(y_idx)) ]
+            else:
+                return None
         
     def task_plot_execute(self, tasks: List[Dict[str, Any]], data: FileData, ax=None):
         s = self.s
@@ -426,14 +465,22 @@ class YamlPlot(PlotBaseClass):
 
         for each_task in tasks:
             x, y = each_task[s.xy_idx]  # may cause exception
+            bias = each_task.get(s.bias, None)
+            x_data = data.get(x) + bias[0] if bias else data.get(x)
+            y_bias = self.y_bias_process(each_task, y)
             if type(y) == list:   # multiple plot
                 for idx, sep_task in enumerate(self.separate_task(each_task)):
-                    plot_one(data.get(x), data.get(y[idx]), sep_task)
+                    y_data = data.get(y[idx]) + y_bias[idx]
+                    # plot_one(data.get(x), data.get(y[idx]), sep_task)
+                    plot_one(x_data, y_data, sep_task)
+
                 # for idx, one_y in enumerate(y):
                 #     plot_one(data.get(x), data.get(one_y), each_task, idx)
             else:  # single plot
-                plot_one(data.get(x), data.get(y), each_task)
-            
+                y_data = data.get(y) + y_bias
+                # plot_one(data.get(x), data.get(y), each_task)
+                plot_one(x_data, y_data, each_task)
+
 
     def task_scatter_execute(self, tasks: List[Dict[str, Any]], data: FileData, ax=None):
         s = self.s
@@ -460,13 +507,20 @@ class YamlPlot(PlotBaseClass):
 
         for each_task in tasks:
             x, y = each_task[s.xy_idx]  # may cause exception
+            bias = each_task.get(s.bias, None)
+            x_data = data.get(x) + bias[0] if bias else data.get(x)
+            y_bias = self.y_bias_process(each_task, y)
             if type(y) == list:   # multiple plot
                 for idx, sep_task in enumerate(self.separate_task(each_task)):
-                    plot_one(data.get(x), data.get(y[idx]), sep_task)
+                    y_data = data.get(y[idx]) + y_bias[idx]
+                    # plot_one(data.get(x), data.get(y[idx]), sep_task)
+                    plot_one(x_data, y_data, sep_task)
                 # for idx, one_y in enumerate(y):
                 #     plot_one(data.get(x), data.get(one_y), each_task, idx)
             else:  # single plot
-                plot_one(data.get(x), data.get(y), each_task)
+                y_data = data.get(y) + y_bias
+                # plot_one(data.get(x), data.get(y), each_task)
+                plot_one(x_data, y_data, each_task)
     
     def task_text_execute(self, x: _num, y: _num, content: str, style: Sequence[_str_num]=None, ax=None):
         e = TextElement(x=x, y=y, content=content)
@@ -489,6 +543,8 @@ class YamlPlot(PlotBaseClass):
             for key in tasks.keys():
                 if key == s.xy_idx:
                     continue
+                elif key == s.bias:
+                    continue
                 new_task[idx][key] = tasks.get(key)[idx]
         return new_task
 
@@ -497,4 +553,16 @@ class YamlPlot(PlotBaseClass):
         
 
 if __name__ == "__main__":
-    y = YamlPlot('test.yaml')
+    # y = YamlPlot('test.yaml')
+    try:
+        yaml_argv = sys.argv[1]
+        y = YamlPlot(yaml_argv)
+    except:
+        yaml_files = list(filter(lambda x: x.endswith('.yaml') or x.endswith('.yml'), os.listdir()))
+        if len(yaml_files) == 1:
+            y = YamlPlot(yaml_files[0])
+        elif len(yaml_files) == 0:
+            print('no yaml file exists in current directory!')
+        else:
+            print('no specific yaml file in argument and multiple yaml files exists at current directory')
+
